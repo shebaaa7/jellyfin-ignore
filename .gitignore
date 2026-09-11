@@ -4,3 +4,11 @@ obj/
 .idea/
 artifacts
 jellyfin-ignore/
+.dotnet-cli/
+.dotnet-sdk-10/
+.nuget-packages/
+.dotnet-install.ps1
+
+# Private working notes: real hostnames, IPs, test credentials, personal
+# media library layout. Never publish this file or anything like it.
+CLAUDE.md

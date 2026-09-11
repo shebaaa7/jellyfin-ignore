@@ -1,79 +1,133 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text.RegularExpressions;
-using DotNet.Globbing;
+using System.Threading;
+using Jellyfin.Plugin.Ignore.Configuration;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Resolvers;
+using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.IO;
 
 namespace Jellyfin.Plugin.Ignore;
 
 /// <summary>
-/// Ignore rules for the Jellyfin Ignore plugin.
+/// Applies ignore rules from an immutable cache prepared outside Jellyfin's resolver callback.
 /// </summary>
 public class IgnoreRule : IResolverIgnoreRule
 {
-    private static readonly GlobOptions _globOptions = new GlobOptions
-    {
-        Evaluation =
-            {
-                CaseInsensitive = true
-            }
-    };
-
-    private static Glob[]? _globs;
+    private static CompiledLibraryRoot[] _libraryRoots = Array.Empty<CompiledLibraryRoot>();
 
     /// <summary>
-    /// Update the patterns to ignore.
+    /// Clears all active ignore rules while library aliases are being reconciled.
     /// </summary>
-    public static void UpdateGlobs()
+    internal static void ClearSnapshot()
     {
-        if (Plugin.Instance == null)
-        {
-            return;
-        }
-
-        var patternsString = Plugin.Instance.Configuration.IgnoreString;
-        var patterns = patternsString.Split("\n").Select(p => Regex.Unescape(p).Trim()).Where(p => p.Length > 0);
-
-        _globs = patterns.Select(p => Glob.Parse(p, _globOptions)).ToArray();
+        Volatile.Write(ref _libraryRoots, Array.Empty<CompiledLibraryRoot>());
     }
 
     /// <summary>
-    /// The logic for whether we should ignore a path.
+    /// Replaces the active ignore-rule snapshot.
     /// </summary>
-    /// <param name="fileInfo">The file we are looking at to decide if we should ignore it.</param>
-    /// <param name="parent">The BaseItem.</param>
-    /// <returns>Whether the file should be ignored.</returns>
-    public bool ShouldIgnore(FileSystemMetadata fileInfo, BaseItem? parent)
+    /// <param name="libraries">The current Jellyfin virtual folders.</param>
+    /// <param name="configuration">The plugin configuration.</param>
+    internal static void UpdateSnapshot(
+        IEnumerable<VirtualFolderInfo> libraries,
+        PluginConfiguration configuration)
     {
-        if (_globs == null)
+        var compiledConfigurations = configuration.LibraryConfigurations
+            .Select(library => new CompiledLibraryConfiguration(
+                library.LibraryId,
+                library.LibraryName,
+                GlobPath.ParsePatterns(library.Patterns)))
+            .ToArray();
+
+        var roots = new List<CompiledLibraryRoot>();
+        foreach (var library in libraries)
         {
-            UpdateGlobs();
+            var configuredLibrary = FindConfiguration(compiledConfigurations, library);
+            if (configuredLibrary is null || configuredLibrary.Patterns.Length == 0)
+            {
+                continue;
+            }
+
+            foreach (var location in library.Locations.Where(location => !string.IsNullOrWhiteSpace(location)))
+            {
+                roots.Add(new CompiledLibraryRoot(
+                    LibraryPathResolver.NormalizePath(location),
+                    configuredLibrary.Patterns));
+            }
         }
 
-        if (_globs == null)
+        Volatile.Write(
+            ref _libraryRoots,
+            roots.OrderByDescending(root => root.RootPath.Length).ToArray());
+    }
+
+    /// <inheritdoc />
+    public bool ShouldIgnore(FileSystemMetadata fileInfo, BaseItem? parent)
+    {
+        var candidatePath = GetCandidatePath(fileInfo, parent);
+        if (string.IsNullOrWhiteSpace(candidatePath))
         {
             return false;
         }
 
-        var path = fileInfo.Name;
-
-        if (parent != null)
+        try
         {
-            path = Path.Join(parent.Path, fileInfo.Name);
-        }
-
-        int len = _globs.Length;
-        for (int i = 0; i < len; i++)
-        {
-            if (_globs[i].IsMatch(path))
+            var normalizedCandidate = LibraryPathResolver.NormalizePath(candidatePath);
+            var root = Volatile.Read(ref _libraryRoots)
+                .FirstOrDefault(candidate =>
+                    LibraryPathResolver.ContainsPath(candidate.RootPath, normalizedCandidate));
+            if (root is null)
             {
-                return true;
+                return false;
             }
+
+            var relativePath = GlobPath.Normalize(Path.GetRelativePath(root.RootPath, normalizedCandidate));
+            var fullPath = GlobPath.Normalize(normalizedCandidate);
+            return root.Patterns.Any(pattern => pattern.IsMatch(relativePath, fullPath));
+        }
+        catch (Exception exception) when (exception is ArgumentException
+            or IOException
+            or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    private static string GetCandidatePath(FileSystemMetadata fileInfo, BaseItem? parent)
+    {
+        if (!string.IsNullOrWhiteSpace(fileInfo.FullName))
+        {
+            return fileInfo.FullName;
         }
 
-        return false;
+        return parent is null || string.IsNullOrWhiteSpace(parent.Path)
+            ? fileInfo.Name
+            : Path.Join(parent.Path, fileInfo.Name);
     }
+
+    private static CompiledLibraryConfiguration? FindConfiguration(
+        CompiledLibraryConfiguration[] configurations,
+        VirtualFolderInfo library)
+    {
+        var libraryId = library.ItemId ?? string.Empty;
+        var idMatch = configurations.FirstOrDefault(configuration =>
+            !string.IsNullOrWhiteSpace(configuration.LibraryId)
+            && string.Equals(configuration.LibraryId, libraryId, StringComparison.OrdinalIgnoreCase));
+
+        return idMatch ?? configurations.FirstOrDefault(configuration =>
+            string.IsNullOrWhiteSpace(configuration.LibraryId)
+            && string.Equals(configuration.LibraryName, library.Name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private sealed record CompiledLibraryConfiguration(
+        string LibraryId,
+        string LibraryName,
+        IgnorePatternMatcher[] Patterns);
+
+    private sealed record CompiledLibraryRoot(
+        string RootPath,
+        IgnorePatternMatcher[] Patterns);
 }

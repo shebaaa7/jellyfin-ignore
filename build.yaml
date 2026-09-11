@@ -1,16 +1,16 @@
 ---
-name: "Jellyfin Ignore"
-guid: "277cd84e-44c3-45a1-8f3c-2537ddac0ccf"
-version: "0.5.0.0"
-targetAbi: "10.9.0.0"
-framework: "net8.0"
-overview: "Specifiy filepath patterns to ignore on library scan"
+name: "Jellyfin Ignore Per-Library"
+guid: "a720b664-73a5-40ec-9882-411c7c39faea"
+version: "0.9.1.0"
+targetAbi: "12.0.0.0"
+framework: "net10.0"
+overview: "Per-library ignore globs with automatic nested-root isolation"
 description: >
-  This Jellyfin plugin allows you to specify filepath patterns to ignore when performing a library scan. It can for example ignore specific file extensions (like .m3u). The patterns can be specified on the plugin configuration page.
+  Community fork of Jellyfin Ignore that assigns glob patterns to individual libraries. On Windows, nested dedicated-library roots can be migrated automatically to plugin-managed NTFS junction aliases, giving Jellyfin separate path identities without moving or copying media.
 category: "General"
-owner: "fdett"
+owner: "shebaaa7 (community fork of fdett)"
 artifacts:
 - "Jellyfin.Plugin.Ignore.dll"
 changelog: >
-  Update for 10.9 + dotnet8.0 and bugfix when null parent folder
-imageUrl: "https://raw.githubusercontent.com/fdett/jellyfin-ignore/master/img/image.png"
+  Replace unreliable scan-context inference with automatic NTFS junction aliases, cache all resolver state outside ShouldIgnore, add fail-safe validation and status reporting, and preserve per-library configuration. 0.8.0.0: place alias junctions on the same drive as their media, close to the drive root, instead of nested deep under Jellyfin's plugin configuration directory. This keeps deeply nested media paths well under Windows' 260-character limit, which native image decoders can silently fail against even for a valid, readable file; existing aliases are automatically relocated to the shorter path on first reconcile after upgrading. 0.9.0.0: add Linux support. Automatic aliases now also work on Linux using plain symlinks (created with .NET's built-in Directory.CreateSymbolicLink, no elevated privileges required), placed under the plugin's own configuration directory rather than a drive root, since Linux has no MAX_PATH-style path limit and "/" is not writable by the Jellyfin service user. 0.9.1.0: the plugin's settings page now appears in the dashboard's left-hand navigation menu (Plugins section) instead of only being reachable via Dashboard > Plugins > gear icon.
+imageUrl: "https://raw.githubusercontent.com/shebaaa7/jellyfin-ignore/master/img/image.png"

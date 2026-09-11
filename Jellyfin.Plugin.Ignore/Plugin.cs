@@ -25,14 +25,14 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     {
         Instance = this;
         this.ConfigurationChanged = this.ConfigurationChangedEventHandler;
-        IgnoreRule.UpdateGlobs();
+        IgnoreRule.ClearSnapshot();
     }
 
     /// <inheritdoc />
-    public override string Name => "Jellyfin Ignore";
+    public override string Name => "Jellyfin Ignore Per-Library";
 
     /// <inheritdoc />
-    public override Guid Id => Guid.Parse("277cd84e-44c3-45a1-8f3c-2537ddac0ccf");
+    public override Guid Id => Guid.Parse("a720b664-73a5-40ec-9882-411c7c39faea");
 
     /// <summary>
     /// Gets the current plugin instance.
@@ -40,13 +40,13 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     public static Plugin? Instance { get; private set; }
 
     /// <summary>
-    /// When the configuration is updated by the user, we also update the ignore patterns.
+    /// When configuration changes, requests a safe alias and pattern-cache reconciliation.
     /// </summary>
     /// <param name="sender">The object triggering the configuration change.</param>
     /// <param name="c">The configuration object.</param>
     public void ConfigurationChangedEventHandler(object? sender, BasePluginConfiguration c)
     {
-        IgnoreRule.UpdateGlobs();
+        LibraryAliasManager.RequestReconcile();
     }
 
     /// <inheritdoc />
@@ -57,7 +57,11 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             new PluginPageInfo
             {
                 Name = this.Name,
-                EmbeddedResourcePath = string.Format(CultureInfo.InvariantCulture, "{0}.Configuration.configPage.html", GetType().Namespace)
+                EmbeddedResourcePath = string.Format(CultureInfo.InvariantCulture, "{0}.Configuration.configPage.html", GetType().Namespace),
+                EnableInMainMenu = true,
+                MenuSection = "server",
+                MenuIcon = "filter_alt",
+                DisplayName = this.Name
             }
         };
     }

@@ -2,57 +2,167 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Jellyfin Ignore Options Page</title>
+    <title>Jellyfin Ignore Per-Library</title>
 </head>
 <body>
-    <div id="TemplateConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-select,emby-checkbox">
+    <div id="IgnorePerLibraryConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox">
         <div data-role="content">
             <div class="content-primary">
-                <form id="TemplateConfigForm">
-                    <div class="inputContainer">
-                        <div><label class="inputLabel inputLabelUnfocused" for="IgnoreString">Ignore patterns</label></div>
-                        <textarea id="IgnoreString" name="IgnoreString"  is="emby-textarea" rows="10" style="width: 100%" class="emby-textarea"></textarea>
-                        <div class="fieldDescription">
-                            <p>List of patterns to ignore (one per line). Pattern matching is using the DotNet.Glob library. You can find examples <a href="https://github.com/dazinator/DotNet.Glob">here</a>.</p>
-
-                            <p>Matching is done on the entire path. If you want to ignore a specific file extension, the pattern would be (using mp3 as an example): <code>/**/*.mp3</code></p>
+                <form id="IgnorePerLibraryConfigForm">
+                    <div class="verticalSection">
+                        <h2 class="sectionTitle">Per-library ignore patterns</h2>
+                        <p>
+                            Enter one glob per line, relative to the selected library's root.
+                        </p>
+                        <p>
+                            For example, <code>zz Home Movies/**</code> on a parent library skips that folder and
+                            its contents. For nested dedicated libraries, the plugin gives the dedicated library
+                            a separate alias path so Jellyfin does not merge both scans into one physical tree.
+                            Pattern matching uses <a href="https://github.com/dazinator/DotNet.Glob" target="_blank" rel="noopener noreferrer">DotNet.Glob</a>.
+                        </p>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input id="EnableAutomaticAliases" type="checkbox" is="emby-checkbox" />
+                                <span>Automatically manage aliases for nested library locations</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Required for overlapping library roots. On Save, the plugin creates NTFS junctions
+                                in Jellyfin's plugin configuration directory and replaces only the dedicated
+                                library's configured path. Media is not moved or copied. Existing managed aliases
+                                are retained if this option is later disabled.
+                            </div>
                         </div>
+                        <div class="inputContainer">
+                            <div class="fieldDescription" id="AliasManagementStatus"></div>
+                            <div class="fieldDescription" id="AliasManagementError" style="color: #d33;"></div>
+                            <div class="fieldDescription" id="ManagedAliasList"></div>
+                        </div>
+                        <div id="LibraryPatternEditors"></div>
                     </div>
                     <div>
                         <button is="emby-button" type="submit" class="raised button-submit block emby-button">
-                            <span>Save</span>
+                            <span>Save and apply</span>
                         </button>
                     </div>
                 </form>
             </div>
         </div>
         <script type="text/javascript">
-            var PluginConfig = {
-                pluginUniqueId: '277cd84e-44c3-45a1-8f3c-2537ddac0ccf'
-            };
+            (function () {
+                var pluginConfig = {
+                    pluginUniqueId: 'a720b664-73a5-40ec-9882-411c7c39faea'
+                };
+                var page = document.querySelector('#IgnorePerLibraryConfigPage');
+                var form = document.querySelector('#IgnorePerLibraryConfigForm');
+                var editors = document.querySelector('#LibraryPatternEditors');
+                var enableAutomaticAliases = document.querySelector('#EnableAutomaticAliases');
+                var aliasStatus = document.querySelector('#AliasManagementStatus');
+                var aliasError = document.querySelector('#AliasManagementError');
+                var managedAliasList = document.querySelector('#ManagedAliasList');
 
-            document.querySelector('#TemplateConfigPage')
-                .addEventListener('pageshow', function() {
+                function findSavedConfiguration(configurations, library) {
+                    return (configurations || []).find(function (configuration) {
+                        return (configuration.LibraryId && configuration.LibraryId === library.ItemId)
+                            || (!configuration.LibraryId && configuration.LibraryName === library.Name);
+                    });
+                }
+
+                function createLibraryEditor(library, savedConfiguration) {
+                    var container = document.createElement('div');
+                    container.className = 'inputContainer';
+
+                    var label = document.createElement('label');
+                    label.className = 'inputLabel inputLabelUnfocused';
+                    label.textContent = library.Name;
+
+                    var textarea = document.createElement('textarea');
+                    textarea.setAttribute('is', 'emby-textarea');
+                    textarea.className = 'emby-textarea libraryPatterns';
+                    textarea.rows = 6;
+                    textarea.style.width = '100%';
+                    textarea.dataset.libraryId = library.ItemId || '';
+                    textarea.dataset.libraryName = library.Name;
+                    textarea.value = savedConfiguration ? savedConfiguration.Patterns : '';
+                    label.htmlFor = 'patterns-' + (library.ItemId || library.Name);
+                    textarea.id = label.htmlFor;
+
+                    var description = document.createElement('div');
+                    description.className = 'fieldDescription';
+                    description.textContent = (library.Locations || []).join(', ');
+
+                    container.appendChild(label);
+                    container.appendChild(textarea);
+                    container.appendChild(description);
+                    return container;
+                }
+
+                function loadPage() {
                     Dashboard.showLoadingMsg();
-                    ApiClient.getPluginConfiguration(PluginConfig.pluginUniqueId).then(function (config) {
-                        document.querySelector('#IgnoreString').value = config.IgnoreString;
+                    Promise.all([
+                        ApiClient.getPluginConfiguration(pluginConfig.pluginUniqueId),
+                        ApiClient.getVirtualFolders()
+                    ]).then(function (results) {
+                        var configuration = results[0];
+                        var libraries = results[1];
+                        editors.replaceChildren();
+                        enableAutomaticAliases.checked = configuration.EnableAutomaticAliases === true;
+                        aliasStatus.textContent = configuration.AliasManagementStatus || '';
+                        aliasError.textContent = configuration.AliasManagementError || '';
+
+                        var managedAliases = configuration.ManagedAliases || [];
+                        managedAliasList.replaceChildren();
+                        if (managedAliases.length > 0) {
+                            var heading = document.createElement('strong');
+                            heading.textContent = 'Managed aliases:';
+                            managedAliasList.appendChild(heading);
+                            var list = document.createElement('ul');
+                            managedAliases.forEach(function (alias) {
+                                var item = document.createElement('li');
+                                item.textContent = alias.LibraryName + ': ' + alias.OriginalPath + ' → ' + alias.AliasPath;
+                                list.appendChild(item);
+                            });
+                            managedAliasList.appendChild(list);
+                        }
+
+                        libraries.forEach(function (library) {
+                            editors.appendChild(createLibraryEditor(
+                                library,
+                                findSavedConfiguration(configuration.LibraryConfigurations, library)));
+                        });
+
+                        Dashboard.hideLoadingMsg();
+                    }, function () {
                         Dashboard.hideLoadingMsg();
                     });
-                });
+                }
 
-            document.querySelector('#TemplateConfigForm')
-                .addEventListener('submit', function(e) {
-                Dashboard.showLoadingMsg();
-                ApiClient.getPluginConfiguration(PluginConfig.pluginUniqueId).then(function (config) {
-                    config.IgnoreString = document.querySelector('#IgnoreString').value;
-                    ApiClient.updatePluginConfiguration(PluginConfig.pluginUniqueId, config).then(function (result) {
-                        Dashboard.processPluginConfigurationUpdateResult(result);
+                page.addEventListener('pageshow', loadPage);
+
+                form.addEventListener('submit', function (event) {
+                    event.preventDefault();
+                    Dashboard.showLoadingMsg();
+
+                    ApiClient.getPluginConfiguration(pluginConfig.pluginUniqueId).then(function (configuration) {
+                        configuration.EnableAutomaticAliases = enableAutomaticAliases.checked;
+                        configuration.LibraryConfigurations = Array.from(
+                            editors.querySelectorAll('.libraryPatterns'))
+                            .map(function (textarea) {
+                                return {
+                                    LibraryId: textarea.dataset.libraryId,
+                                    LibraryName: textarea.dataset.libraryName,
+                                    Patterns: textarea.value
+                                };
+                            });
+
+                        ApiClient.updatePluginConfiguration(pluginConfig.pluginUniqueId, configuration)
+                            .then(function (result) {
+                                Dashboard.processPluginConfigurationUpdateResult(result);
+                            });
                     });
-                });
 
-                e.preventDefault();
-                return false;
-            });
+                    return false;
+                });
+            }());
         </script>
     </div>
 </body>

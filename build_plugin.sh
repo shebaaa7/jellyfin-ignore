@@ -37,7 +37,7 @@ MY=$(cd "$(dirname "$0")"; pwd -P) #$(dirname $(realpath -s "${0}"))
 JPRM="python3 -m jprm"
 
 DEFAULT_REPO_DIR="${MY}"
-DEFAULT_REPO_URL="https://github.com/fdett/jellyfin-ignore"
+DEFAULT_REPO_URL="https://github.com/shebaaa7/jellyfin-ignore"
 
 PLUGIN=${1:-${PLUGIN:-.}}
 
